@@ -3152,6 +3152,7 @@ function render() {
     else if (state.tab === 'vaqt') content = renderVaqtHisoboti();
     else if (state.tab === 'chiqimlar') content = renderChiqimlar();
     else if (state.tab === 'oylik') content = renderOylik();
+    else if (state.tab === 'onlayn') content = renderOnlayn();
     else content = renderDeptDashboard();
   } else if (state.user.bolim === 'ombor') {
     if (state.tab === 'ombor_menu') content = renderOmborMenu();
@@ -3786,6 +3787,7 @@ function doLogout() {
   if (SUPABASE_URL && apiToken) apiCallSupabase('/api/auth/logout', 'POST', {}).catch(() => {});
   clearToken();
   lastApiEtag = '';
+  state.online = null;
   storage.remove('app_user');
   storage.remove('app_tab');
   if (apiPollingTimer) { clearInterval(apiPollingTimer); apiPollingTimer = null; }
@@ -5525,7 +5527,7 @@ function renderStatHub() {
 const SH_OY = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
 const SH_HAFTA = ['yakshanba', 'dushanba', 'seshanba', 'chorshanba', 'payshanba', 'juma', 'shanba'];
 const SH_STAGE = { zborka: 'Zborka', shkurka: 'Shkurka', astarsepish: 'Astar', astarshkurka: 'A. shkurka', lak: 'Lak', susal: 'Susal', qoplash: 'Qoplash', ombor: 'Ombor' };
-const SH_MORE = ['buyurtmalar', 'ombor_zaxira', 'chiqimlar', 'oylik', 'vaqt', 'fasonlar', 'arxiv'];
+const SH_MORE = ['buyurtmalar', 'ombor_zaxira', 'chiqimlar', 'oylik', 'vaqt', 'fasonlar', 'arxiv'].concat(SUPABASE_URL ? ['onlayn'] : []);
 
 (function () {
   const css = `
@@ -5782,6 +5784,7 @@ function renderAdminHome() {
     </div>
     <div class="sh-name">Assalomu alaykum 👋</div>
     <div class="sh-hnote">🏭 7 kunda omborga <b>${shInt(S.made)} dona</b> tayyor bo‘ldi${S.madeDelta === null ? '' : ` (${S.madeDelta >= 0 ? '+' : ''}${S.madeDelta}%)`}</div>
+    ${renderOnlineStrip()}
   </div>
   <div class="sh-kpis">
     ${kpi('⚡', '#EEF4FF', 'Jarayonda', `${S.active} konver`, `${shInt(S.activeChairs)} dona`, "shGoIsh('all')")}
@@ -5806,13 +5809,14 @@ function shMenuItems() {
     ombor_zaxira: ['📦', 'Tayyor mahsulot ombori', '', false], chiqimlar: ['🚚', 'Chiqim tarixi', '', false],
     statistika: ['📊', 'Statistika', '', false], vaqt: ['⏱', 'Vaqt hisoboti', '', false],
     oylik: ['💰', 'Oyliklar', debt.count ? String(debt.count) : '', true], fasonlar: ['🪑', 'Fasonlar', '', false],
-    arxiv: ['🗄', 'Arxiv', state.archiveCount ? String(state.archiveCount) : '', false]
+    arxiv: ['🗄', 'Arxiv', state.archiveCount ? String(state.archiveCount) : '', false],
+    onlayn: ['👥', 'Foydalanuvchilar', onlineCount() ? String(onlineCount()) : '', false]
   };
 }
 
 function renderShSide() {
   const M = shMenuItems();
-  const groups = [['ISHLAB CHIQARISH', ['menu', 'ish', 'buyurtmalar']], ['OMBOR', ['ombor_zaxira', 'chiqimlar']], ['TAHLIL', ['statistika', 'vaqt']], ['BOSHQARUV', ['oylik', 'fasonlar', 'arxiv']]];
+  const groups = [['ISHLAB CHIQARISH', ['menu', 'ish', 'buyurtmalar']], ['OMBOR', ['ombor_zaxira', 'chiqimlar']], ['TAHLIL', ['statistika', 'vaqt']], ['BOSHQARUV', ['oylik', 'fasonlar', 'arxiv'].concat(SUPABASE_URL ? ['onlayn'] : [])]];
   return `
   <aside class="sh-side">
     <div class="sh-brand">🪑 ${L().appname}</div>
@@ -5839,7 +5843,7 @@ function renderShNav() {
 
 function renderShSheet() {
   const M = shMenuItems();
-  const bg = { buyurtmalar: '#FFF1E8', ombor_zaxira: '#E7F8EF', chiqimlar: '#EEF4FF', oylik: '#FEECEC', vaqt: '#F3E8FF', fasonlar: '#FEF9E7', arxiv: '#EEF2F7' };
+  const bg = { buyurtmalar: '#FFF1E8', ombor_zaxira: '#E7F8EF', chiqimlar: '#EEF4FF', oylik: '#FEECEC', vaqt: '#F3E8FF', fasonlar: '#FEF9E7', arxiv: '#EEF2F7', onlayn: '#E7F8EF' };
   return `
   <div class="sh-dim" onclick="navSheet(false)"></div>
   <div class="sh-sheet">
@@ -5851,6 +5855,138 @@ function renderShSheet() {
     <div class="sh-me"><div class="sh-mea">B</div><div><b>${L().boshBolim}</b><span>Administrator</span></div><button class="sh-out" onclick="doLogout()">⎋ ${L().chiqish}</button></div>
   </div>`;
 }
+
+// ================= KIM HOZIR DASTURDA (faqat boshqaruvchi, serversiz rejimda) =================
+// Bosh sahifaning ko'k sarlavhasida bo'lim belgichalari (dasturdagilar yorqin, yashil nuqtali); bosilsa —
+// "Foydalanuvchilar" sahifasi: har hisob, qurilmalar, oxirgi kirgan vaqti, bugungi amallar, qurilmani chiqarish.
+// Ma'lumot /api/users/online dan, sahifa ochiq turganda 30 soniyada bir yangilanadi.
+function onlineState() {
+  if (!state.online) state.online = { items: null, at: 0, loading: false, open: {}, myId: '' };
+  return state.online;
+}
+function onlineCount() { const O = onlineState(); return (O.items || []).filter(u => u.online).length; }
+async function onlineMyId() {
+  const O = onlineState();
+  if (O.myId || !apiToken || !(window.crypto && crypto.subtle)) return O.myId;
+  try {
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(apiToken));
+    O.myId = Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+  } catch (e) {}
+  return O.myId;
+}
+async function loadOnline(force) {
+  const O = onlineState();
+  if (!SUPABASE_URL || !apiToken || !state.user || state.user.bolim !== 'admin' || O.loading) return;
+  if (!force && Date.now() - O.at < 25000) return;
+  O.loading = true;
+  try {
+    await onlineMyId();
+    const r = await apiCall('/api/users/online');
+    O.items = (r && r.items) || [];
+  } catch (err) { if (!O.items) O.items = []; }
+  O.at = Date.now();
+  O.loading = false;
+  if (['menu', 'onlayn'].includes(state.tab) && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) render();
+}
+setInterval(() => {
+  if (state.user && state.user.bolim === 'admin' && ['menu', 'onlayn'].includes(state.tab) && document.visibilityState !== 'hidden') loadOnline(true);
+}, 30000);
+
+function onlineAgo(iso) {
+  if (!iso) return 'hech qachon';
+  const t = new Date(iso), s = Math.max(0, (Date.now() - t.getTime()) / 1000), p2 = n => String(n).padStart(2, '0');
+  if (s < 75) return 'hozir';
+  if (s < 3600) return Math.round(s / 60) + ' daq oldin';
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const hm = p2(t.getHours()) + ':' + p2(t.getMinutes());
+  if (t >= d0) return 'bugun ' + hm;
+  if (t >= new Date(d0.getTime() - 86400000)) return 'kecha ' + hm;
+  return p2(t.getDate()) + '.' + p2(t.getMonth() + 1) + ' ' + hm;
+}
+function onlineName(u) { return u.department === 'admin' ? L().boshBolim : getStageLabel(u.department); }
+function onlineCls(u) { return u.online ? 'on' : (u.yaqinda ? 'away' : 'off'); }
+
+function renderOnlineStrip() {
+  if (!SUPABASE_URL) return '';
+  const O = onlineState();
+  if (O.items === null) { setTimeout(() => loadOnline(true), 0); return '<div class="on-strip"><div class="on-tip">⏳ Kim dasturda — yuklanmoqda...</div></div>'; }
+  const on = O.items.filter(u => u.online);
+  return `
+    <div class="on-strip" onclick="navGo('onlayn')" title="Foydalanuvchilar">
+      <div class="on-avs">${O.items.map(u => `<div class="on-av ${onlineCls(u)}" title="${esc(onlineName(u))}">${BOLIM_ICON[u.department] || '🏭'}<i></i></div>`).join('')}</div>
+      <div class="on-tip">${on.length ? `🟢 Hozir dasturda (${on.length}): ${on.map(u => esc(onlineName(u))).join(', ')}` : '⚪ Hozir hech kim dasturda emas'} <b>›</b></div>
+    </div>`;
+}
+
+function onlineToggle(login) { const O = onlineState(); O.open[login] = !O.open[login]; render(); }
+async function onlineKick(id, name) {
+  if (!confirm(`«${name}» qurilmasi dasturdan chiqarilsinmi? U yerda qayta parol so'raladi.`)) return;
+  try { await apiCall('/api/users/sessions/' + encodeURIComponent(id), { method: 'DELETE', overlay: 'Chiqarilmoqda...' }); await loadOnline(true); }
+  catch (err) { apiShowError(err, 'Qurilmani chiqarib bo‘lmadi'); }
+}
+
+function renderOnlayn() {
+  if (!SUPABASE_URL) return `<div class="empty">Bu bo‘lim faqat yangi (serversiz) versiyada ishlaydi.</div>`;
+  const O = onlineState();
+  if (O.items === null) { setTimeout(() => loadOnline(true), 0); return `<div class="empty">⏳ Yuklanmoqda...</div>`; }
+  const on = O.items.filter(u => u.online).length;
+  const rows = O.items.map(u => {
+    const cls = onlineCls(u), open = !!O.open[u.login], ses = u.sessiyalar || [];
+    const status = u.online ? '<b class="on-g">● dasturda</b>' : onlineAgo(u.last_seen);
+    const dev = u.qurilmalar > 0 ? `${u.qurilmalar} qurilma` : (ses.length ? `${ses.length} ta kirilgan qurilma` : 'kirilmagan');
+    const list = open ? `<div class="on-ses">${ses.length ? ses.map(s => {
+        const me = O.myId && s.id === O.myId;
+        return `<div class="on-s"><span class="on-sd ${s.online ? 'on' : ''}"></span><div><b>${esc(s.qurilma)}${me ? ' · <em>shu qurilma</em>' : ''}</b>
+          <span>${s.online ? 'hozir dasturda' : 'oxirgi: ' + onlineAgo(s.last_seen)} · kirgan: ${onlineAgo(s.kirgan)}</span></div>
+          ${me ? '' : `<button class="on-kick" onclick="event.stopPropagation(); onlineKick('${s.id}', '${esc(onlineName(u))} · ${esc(s.qurilma)}')">Chiqarish</button>`}</div>`;
+      }).join('') : '<div class="on-none">Bu hisobga hozir hech qaysi qurilmadan kirilmagan</div>'}</div>` : '';
+    return `<div class="on-row ${open ? 'open' : ''}" onclick="onlineToggle('${esc(u.login)}')">
+        <div class="on-ic">${BOLIM_ICON[u.department] || '🏭'}<i class="${cls}"></i></div>
+        <div class="on-nm"><b>${esc(onlineName(u))}</b><span>Bugun ${u.bugun_amallar} ta amal</span></div>
+        <div class="on-st">${status}<span>${dev}</span></div><div class="on-ch">${open ? '▴' : '▾'}</div>
+      </div>${list}`;
+  }).join('');
+  return `
+    <div class="section-title">👥 Foydalanuvchilar</div>
+    <div class="card on-card">
+      <div class="on-sum"><span>${O.items.length} ta hisob · <b>${on}</b> tasi hozir dasturda</span><button class="secondary on-ref" onclick="loadOnline(true)">🔄</button></div>
+      ${rows}
+    </div>
+    <div class="on-help">🟢 hozir dasturda (oxirgi 1 daqiqa) · 🟡 yaqinda bor edi (10 daqiqagacha) · ⚪ yo‘q. Qatorni bossangiz — qaysi qurilmalardan kirilgani.
+      Bitta bo‘lim hisobi bir nechta telefonda ochiq bo‘lishi mumkin; keraksizini «Chiqarish» bilan yopasiz.</div>`;
+}
+
+(function () {
+  const css = `
+  .on-strip{margin-top:12px;cursor:pointer}
+  .on-avs{display:flex;gap:6px;flex-wrap:wrap}
+  .on-av{position:relative;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;background:rgba(255,255,255,.14);border:1.5px solid rgba(255,255,255,.3)}
+  .on-av i{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;border:2px solid #12306B;background:#22C55E;display:none}
+  .on-av.on i{display:block}.on-av.away i{display:block;background:#F59E0B}.on-av.off{opacity:.38}
+  .on-tip{font-size:11.5px;color:#BFDBFE;margin-top:7px;line-height:1.35}.on-tip b{color:#fff}
+  .on-card{padding:6px 12px !important}
+  .on-sum{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--ink-soft);padding:6px 2px 8px;border-bottom:1px solid #EEF2F7}
+  .on-sum .on-ref{flex:0 0 auto !important;padding:5px 10px !important;margin:0 !important;width:auto !important;min-width:0 !important;max-width:48px}
+  .on-row{display:flex;align-items:center;gap:10px;padding:10px 2px;border-bottom:1px solid #EEF2F7;cursor:pointer}
+  .on-ic{position:relative;width:36px;height:36px;border-radius:12px;background:#F1F5F9;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+  .on-ic i{position:absolute;right:-2px;bottom:-2px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;background:#CBD5E1}
+  .on-ic i.on{background:#22C55E}.on-ic i.away{background:#F59E0B}
+  .on-nm{flex:1;min-width:0}.on-nm b{display:block;font-size:14px}.on-nm span{font-size:11.5px;color:var(--ink-soft)}
+  .on-st{text-align:right;font-size:12px;color:var(--ink-soft)}.on-st span{display:block;font-size:11px;color:#94A3B8}
+  .on-g{color:#16A34A}
+  .on-ch{color:#94A3B8;font-size:12px;width:12px}
+  .on-ses{background:#F8FAFC;border-radius:12px;margin:4px 0 8px;padding:4px 10px}
+  .on-s{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed #E2E8F0;font-size:12.5px}
+  .on-s:last-child{border-bottom:0}.on-s div{flex:1;min-width:0}.on-s b{display:block}.on-s b em{color:#2563EB;font-style:normal;font-weight:600}
+  .on-s span{color:var(--ink-soft);font-size:11px}
+  .on-sd{width:9px;height:9px;border-radius:50%;background:#CBD5E1;flex-shrink:0}.on-sd.on{background:#22C55E}
+  .on-kick{border:0;background:#FEE2E2;color:#B91C1C;font-weight:700;font-size:11.5px;padding:7px 10px;border-radius:9px;cursor:pointer;flex-shrink:0}
+  .on-none{font-size:12px;color:var(--ink-soft);padding:8px 0}
+  .on-help{font-size:11.5px;color:var(--ink-soft);margin:6px 4px 20px;line-height:1.5}`;
+  const el = document.createElement('style');
+  el.textContent = css;
+  document.head.appendChild(el);
+})();
 
 function renderAdminShell(content, banner) {
   const H = homeState(), home = state.tab === 'menu';
