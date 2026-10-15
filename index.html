@@ -5826,14 +5826,6 @@ function renderAdminHome() {
       <b style="${shNodeStyle(S.wip[s], max)}">${S.wip[s]}</b><span>${SH_STAGE[s] || s}</span><div class="sh-jn"></div>${hot ? '<div class="sh-hot">eng ko‘p</div>' : ''}</div>`;
   }).join('');
 
-  const alerts = [];
-  if (S.wip[S.top] > 0) alerts.push(['🧱', '#FFF4E5', '#B45309', `${esc(getStageLabel(S.top))}da ish to‘plangan`, `${shInt(S.wip[S.top])} dona navbatda`, 'Ishlar', `shGoIsh('${S.top}')`]);
-  if (debt.count > 0) alerts.push(['💰', '#FEECEC', '#B91C1C', 'To‘lanmagan oylik', `${shUsd(debt.usd)} · ${debt.count} ta hisob`, 'Oyliklar', 'shGoDebt()']);
-  if (S.oldest) alerts.push(['⏳', '#EEF4FF', '#1D4ED8', 'Eng eski ochiq konver', `${esc(S.oldest.id)} · ${Math.max(0, Math.floor((Date.now() - S.oldest.t) / 86400000))} kun`, 'Buyurtmalar', "navGo('buyurtmalar')"]);
-  const alertHtml = alerts.length
-    ? alerts.map(a => `<div class="sh-al" onclick="${a[6]}"><div class="sh-ali" style="background:${a[1]}">${a[0]}</div><div class="sh-alt"><b>${a[3]}</b><span>${a[4]}</span></div><em style="background:${a[1]};color:${a[2]}">${a[5]} ›</em></div>`).join('')
-    : `<div class="empty" style="padding:18px 6px;">✅ Hozircha e’tibor talab qiladigan narsa yo‘q</div>`;
-
   const hist = H.hist;
   const histHtml = hist === null
     ? `<div class="empty" style="padding:18px 6px;">⏳ Yuklanmoqda...</div>`
@@ -5862,18 +5854,67 @@ function renderAdminHome() {
     ${renderOnlineStrip()}
   </div>
   <div class="sh-kpis">
-    ${kpi('⚡', '#EEF4FF', 'Jarayonda', `${S.active} konver`, `${shInt(S.activeChairs)} dona`, "shGoIsh('all')")}
-    ${kpi('📦', '#E7F8EF', 'Omborda', `${shInt(S.stockN)} dona`, shUsd(S.stockV), "navGo('ombor_zaxira')")}
-    ${kpi('🚚', '#FFF1E8', '7 kunda sotildi', shUsd(S.soldU), `${shInt(S.soldN)} dona`, 'shGoSales()', chip(S.soldDelta))}
-    ${kpi('🏭', '#F3E8FF', '7 kunda tayyor bo‘ldi', `${shInt(S.made)} dona`, 'omborga kirgan', "navGo('statistika')", chip(S.madeDelta), 'sh-k4')}
+    ${kpi('⚡', '#EEF4FF', 'Jarayonda', `${S.active} konver`, `${shInt(S.activeChairs)} dona`, "shGoIsh('all')", '', 'kc-b')}
+    ${kpi('📦', '#E7F8EF', 'Omborda', `${shInt(S.stockN)} dona`, shUsd(S.stockV), "navGo('ombor_zaxira')", '', 'kc-g')}
+    ${kpi('🚚', '#FFF1E8', '7 kunda sotildi', shUsd(S.soldU), `${shInt(S.soldN)} dona`, 'shGoSales()', chip(S.soldDelta), 'kc-o')}
+    ${kpi('🏭', '#F3E8FF', '7 kunda tayyor bo‘ldi', `${shInt(S.made)} dona`, 'omborga kirgan', "navGo('statistika')", chip(S.madeDelta), 'sh-k4 kc-p')}
   </div>
   <div class="sh-sec"><h2>Ishlab chiqarish oqimi <a onclick="shGoIsh('all')">batafsil ›</a></h2>
     <div class="sh-card"><div class="sh-pipe">${nodes}</div><div class="sh-lg"><span>kam</span><i></i><span>ko‘p</span></div></div></div>
   <div class="sh-g2">
-    <div class="sh-sec"><h2>Diqqat talab qiladi <a>${alerts.length} ta</a></h2><div class="sh-card np">${alertHtml}</div></div>
+    ${renderShToday()}
     <div class="sh-sec"><h2>So‘nggi harakatlar</h2><div class="sh-card np">${histHtml}</div></div>
   </div>`;
 }
+
+// "Bugun tugatildi": har bo'lim bugun (qurilma vaqti bo'yicha) nechta stul tugatgani va kechagi kun bilan farqi.
+// Maket: maket/diqqat_maket.html (1-variant). Avvalgi "Diqqat talab qiladi" bloki o'rnida.
+function shTodayStats() {
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const t0 = d0.getTime(), y0 = t0 - 86400000, t1 = t0 + 86400000;
+  const today = {}, yest = {};
+  STAGE_SEQ.forEach(s => { today[s] = 0; yest[s] = 0; });
+  state.orders.concat(state.archive || []).forEach(o => (o.partiyalar || []).forEach(p => {
+    if (p.holat !== 'tugadi' || !p.tugashVaqti || today[p.bosqich] === undefined) return;
+    const t = new Date(p.tugashVaqti).getTime(), n = Number(p.soni) || 0;
+    if (t >= t0 && t < t1) today[p.bosqich] += n; else if (t >= y0 && t < t0) yest[p.bosqich] += n;
+  }));
+  const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
+  return { today, yest, totalToday: sum(today), totalYest: sum(yest) };
+}
+function renderShToday() {
+  const T = shTodayStats();
+  const tiles = STAGE_SEQ.map(s => {
+    const d = T.today[s] - T.yest[s];
+    const delta = d > 0 ? `<em class="up">▲ ${d}</em>` : (d < 0 ? `<em class="dn">▼ ${-d}</em>` : `<em class="eq">= 0</em>`);
+    return `<div class="sh-td ${T.today[s] ? '' : 'zero'}" onclick="shGoIsh('${s}')" title="${esc(getStageLabel(s))}">
+      <i>${BOLIM_ICON[s] || '🏭'}</i><b>${shInt(T.today[s])}</b><small>${s === 'ombor' ? 'Omborga' : (SH_STAGE[s] || s)}</small>${delta}</div>`;
+  }).join('');
+  return `<div class="sh-sec"><h2>Bugun tugatildi <a onclick="navGo('statistika')">batafsil ›</a></h2>
+    <div class="sh-card"><div class="sh-today">${tiles}</div>
+      <div class="sh-tdl"><span>Kecha: <b>${shInt(T.totalYest)} dona</b></span><span>Bugun: <b>${shInt(T.totalToday)} dona</b></span></div></div></div>`;
+}
+(function () {
+  const css = `
+  .sh-today{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .sh-td{background:#fff;border-radius:14px;padding:8px 4px 7px;text-align:center;box-shadow:0 4px 10px -8px rgba(15,23,42,.35);cursor:pointer;min-width:0}
+  .sh-td i{font-style:normal;font-size:17px;display:block}.sh-td b{display:block;font-size:17px;line-height:1.2}
+  .sh-td small{display:block;font-size:10px;color:#64748B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sh-td em{font-style:normal;font-size:10px;font-weight:800}.sh-td em.up{color:#16A34A}.sh-td em.dn{color:#DC2626}.sh-td em.eq{color:#94A3B8}
+  .sh-td.zero b{color:#94A3B8}
+  .sh-tdl{display:flex;justify-content:space-between;font-size:12px;color:#475569;margin:10px 4px 0}.sh-tdl b{color:#0F172A}
+  /* ko'rsatkichlar: shisha va o'z rangidagi nur (maket: maket/kpi_maket.html, D) */
+  .sh-kpi.kc-b{--kc:#2563EB;--kd:#1D4ED8}.sh-kpi.kc-g{--kc:#16A34A;--kd:#15803D}.sh-kpi.kc-o{--kc:#EA580C;--kd:#C2410C}.sh-kpi.kc-p{--kc:#7C3AED;--kd:#6D28D9}
+  .sh-kpi[class*="kc-"]{position:relative;overflow:hidden;background:rgba(255,255,255,.86) !important;border:1px solid #fff !important;
+    box-shadow:inset 0 1px 0 #fff,0 14px 28px -16px rgba(15,23,42,.4) !important;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+  .sh-kpi[class*="kc-"]::before{content:"";position:absolute;left:-20px;top:-30px;width:130px;height:130px;border-radius:50%;background:var(--kc);opacity:.28;filter:blur(22px);pointer-events:none}
+  .sh-kpi[class*="kc-"] > *{position:relative}
+  .sh-kpi[class*="kc-"] .sh-ki{background:#fff !important;box-shadow:0 6px 14px -8px var(--kc)}
+  .sh-kpi[class*="kc-"] b{color:var(--kd)}`;
+  const el = document.createElement('style');
+  el.textContent = css;
+  document.head.appendChild(el);
+})();
 
 function shMenuItems() {
   const debt = shDebt();
