@@ -3280,6 +3280,7 @@ function render() {
     ${renderEditStockModal()}
     ${renderEditChiqimModal()}
     ${renderHistoryModal()}
+    ${renderShTodayModal()}
     ${renderEditModal()}
     ${(pendingPushes > 0 || state.manualSyncInProgress) ? `
     <div style="position:fixed; inset:0; background:rgba(15,23,42,0.35); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; gap:12px;">
@@ -4164,9 +4165,13 @@ function oylikUsd(n) {
 function oylikUzs(n) {
   return n === null || n === undefined ? '—' : Math.round(Number(n)).toLocaleString('ru-RU') + ' so‘m';
 }
+// Narx kiritilganidek to'liq ko'rsatiladi (3.338984 → $3.338984), yaxlitlanmaydi; jami summalar 2 xonada qoladi.
 function oylikNarx(narx, valyuta) {
   if (narx === null || narx === undefined) return '<span style="color:#DC2626;font-weight:700;">narx yo‘q</span>';
-  return valyuta === 'USD' ? oylikUsd(narx) : oylikUzs(narx);
+  const n = Number(narx);
+  return valyuta === 'USD'
+    ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
+    : n.toLocaleString('ru-RU', { maximumFractionDigits: 6 }) + ' so‘m';
 }
 
 function openOylik() {
@@ -4481,12 +4486,12 @@ function renderOylikNarxlar() {
     <div class="card" style="padding:12px;">
       <div class="row-between">
         <b>🪑 ${esc(m)}${MODELS.includes(m) ? '' : ' <span style="font-weight:400;font-size:11px;color:var(--ink-soft);">(fasonlar ro‘yxatida yo‘q)</span>'}</b>
-        ${cur ? `<span style="font-size:11px;color:var(--ink-soft);">${esc(cur.amal_boshi)} dan</span>` : `<span class="badge wait">narx yo‘q</span>`}
+        ${cur ? '' : `<span class="badge wait">narx yo‘q</span>`}
       </div>
       <div style="display:grid; grid-template-columns:1.4fr 1fr; gap:8px; margin-top:10px;">
         <div>
           <label class="field-label">Narx</label>
-          <input type="number" min="0" step="0.01" value="${esc(narx)}" oninput="oylikDraft(${i},'narx',this.value)" style="margin-bottom:0;">
+          <input type="number" min="0" step="any" value="${esc(narx)}" oninput="oylikDraft(${i},'narx',this.value)" style="margin-bottom:0;">
         </div>
         <div>
           <label class="field-label">Valyuta</label>
@@ -4507,7 +4512,7 @@ function renderOylikNarxlar() {
     <input type="number" min="0" step="1" value="${esc(O.kurs)}" oninput="oylikSetKurs(this.value)" placeholder="Masalan: 12900" style="margin-bottom:0;">
   </div>
   <button class="primary" style="width:100%;margin:6px 0 12px;" onclick="saveOylikRates()">💾 Hammasini saqlash</button>
-  <p style="font-size:12px;color:var(--ink-soft);margin:0 2px 12px;">Narx o‘zgartirilsa, eski narx tarixda qoladi va faqat yangi ishlar uchun amal qiladi.</p>
+  <p style="font-size:12px;color:var(--ink-soft);margin:0 2px 12px;">Narx o‘zgartirilsa, eski narx ustiga yoziladi va <b>hali saqlanmagan</b> barcha hisoblarga qo‘llanadi. Saqlangan hisoblarning narxi muzlatilgan — ularga ta’sir qilmaydi. Narxni o‘zgartirishdan oldin o‘tgan davr hisobini saqlab qo‘ying.</p>
   ${rows || `<div class="empty">Fasonlar ro'yxati bo'sh</div>`}
   ${rows ? `<button class="primary" style="width:100%;margin-top:4px;" onclick="saveOylikRates()">💾 Hammasini saqlash</button>` : ''}`;
 }
@@ -4541,12 +4546,21 @@ function renderOylikHisob() {
       <button class="secondary" style="width:100%;margin-top:10px;" onclick="oylikSetView('narx')">Narxlarni kiritish →</button>
     </div>` : ''}
     ${(rep.items || []).length === 0 ? `<div class="empty">Tanlangan davrda bajarilgan ish topilmadi</div>` : `
-    <div class="card" style="padding:12px;">
-      <div style="max-height:360px;overflow:auto;">
+    <div class="card oy-kesim ${O.kesim === 'konver' ? 'k' : 'f'}${O.kesimAnim ? ' oy-flip-' + O.kesimAnim : ''}" ontouchstart="oylikSwipeStart(event)" ontouchend="oylikSwipeEnd(event)">
+      <div class="oy-kesim-head">
+        <span class="oy-kesim-ttl">${esc(getStageLabel(rep.bolim))} · ${oylikKunlar(new Set([String(rep.from_date).slice(0, 10), String(rep.to_date).slice(0, 10)]))}</span>
+        <div class="oy-seg">
+          <button class="${O.kesim !== 'konver' ? 'on' : ''}" onclick="oylikSetKesim('fason')">🪑 Fasonlar <em>${(rep.items || []).length}</em></button>
+          <button class="${O.kesim === 'konver' ? 'on' : ''}" onclick="oylikSetKesim('konver')">📦 Konverlar <em>${oylikKonverQatorlar(rep).length}</em></button>
+        </div>
+      </div>
+      <div class="oy-kesim-body" style="max-height:360px;overflow:auto;">
+        ${O.kesim === 'konver' ? renderOylikKonverlar(rep) : `
         <table class="clean-table">
           <thead><tr><th>Fason</th><th>Soni</th><th>Narx</th><th>Jami $</th><th>Jami so‘m</th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
+        <div class="oy-kesim-hint">⇆ Surib almashtiring</div>`}
       </div>
     </div>
     <div class="total-summary"><span class="label">Jami bajarilgan:</span><span class="number">${rep.jami_soni} dona</span></div>
@@ -4581,6 +4595,131 @@ function renderOylikHisob() {
   </div>
   ${result}`;
 }
+
+// ---- Oylik hisobi: fasonlar / konverlar kesimi (tugma yoki barmoq bilan surib almashtiriladi) ----
+// Konverlar kesimi sahifadagi konverlardan (faol + arxiv) hisoblanadi: shu bo'lim, 'tugadi', tugash kuni (Toshkent, UTC+5)
+// hisob oralig'ida — server hisobi bilan bir xil qoida. Narx va kurs — hisobdagi shu fason qatoridan.
+function oylikSetKesim(k, dir) {
+  const O = oylikState();
+  if ((O.kesim || 'fason') === k) return;
+  O.kesim = k;
+  O.kesimAnim = dir || (k === 'konver' ? 'l' : 'r');
+  render();
+  O.kesimAnim = null;   // animatsiya faqat almashganda bir marta
+}
+
+let oylikTouch = null;
+function oylikSwipeStart(e) {
+  const t = e.touches && e.touches[0];
+  oylikTouch = t ? { x: t.clientX, y: t.clientY } : null;
+}
+function oylikSwipeEnd(e) {
+  const s = oylikTouch, t = e.changedTouches && e.changedTouches[0];
+  oylikTouch = null;
+  if (!s || !t) return;
+  const dx = t.clientX - s.x, dy = t.clientY - s.y;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  // Jadval ekranga sig'may yon tomonga suriladigan bo'lsa, surish jadvalning o'ziga qoldiriladi (tugma ishlaydi)
+  const body = e.currentTarget.querySelector('.oy-kesim-body');
+  if (body && body.scrollWidth > body.clientWidth + 4) return;
+  oylikSetKesim(oylikState().kesim === 'konver' ? 'fason' : 'konver', dx < 0 ? 'l' : 'r');
+}
+
+function oylikKonverQatorlar(rep) {
+  const from = String(rep.from_date).slice(0, 10), to = String(rep.to_date).slice(0, 10);
+  const byFason = {};
+  (rep.items || []).forEach(it => { byFason[String(it.fason || '').trim().toLowerCase()] = it; });
+  const map = new Map();
+  state.orders.concat(state.archive || []).forEach(o => (o.partiyalar || []).forEach(p => {
+    if (p.bosqich !== rep.bolim || p.holat !== 'tugadi' || !p.tugashVaqti) return;
+    const t = new Date(p.tugashVaqti).getTime(), soni = Number(p.soni) || 0;
+    if (isNaN(t) || soni <= 0) return;
+    const kun = new Date(t + 5 * 3600000).toISOString().slice(0, 10);
+    if (kun < from || kun > to) return;
+    const id = String(o.id);
+    let r = map.get(id);
+    if (!r) map.set(id, r = { id, fason: String(o.model || '').trim(), soni: 0, kunlar: new Set(), oxirgi: 0 });
+    r.soni += soni;
+    r.kunlar.add(kun);
+    r.oxirgi = Math.max(r.oxirgi, t);
+  }));
+  return [...map.values()].map(r => {
+    const it = byFason[r.fason.toLowerCase()];
+    let usd = null, uzs = null;
+    if (it && it.narx !== null && it.narx !== undefined) {
+      const val = Math.round(Number(it.narx) * r.soni * 100) / 100, kurs = Number(it.kurs_uzs_usd) || 0;
+      if (it.valyuta === 'USD') { usd = val; uzs = val * kurs; } else { uzs = val; usd = kurs ? val / kurs : null; }
+    }
+    return Object.assign(r, { usd, uzs });
+  }).sort((a, b) => a.oxirgi - b.oxirgi);
+}
+
+function oylikKunlar(set) {
+  const d = [...set].sort().map(k => k.slice(8, 10) + '.' + k.slice(5, 7));
+  return d.length === 1 ? d[0] : `${d[0]}–${d[d.length - 1]}`;
+}
+
+function renderOylikKonverlar(rep) {
+  const archPending = (state.archiveCount || 0) > 0 && !state.archiveLoaded;
+  if (archPending && !state.archiveLoading) ensureArchive();
+  const rows = oylikKonverQatorlar(rep);
+  const jami = rows.reduce((s, r) => s + r.soni, 0);
+  const note = archPending
+    ? `<div class="oy-kesim-note">⏳ Arxiv yuklanmoqda — ro‘yxat to‘ldiriladi...</div>`
+    : (jami !== Number(rep.jami_soni) ? `<div class="oy-kesim-note warn">⚠️ Konverlar bo‘yicha ${jami} dona, hisobda ${rep.jami_soni} dona. Sahifani yangilang.</div>` : '');
+  if (!rows.length) return note + `<div class="empty">Konverlar topilmadi</div>`;
+  // Maket: maket/oylik_kesim_maket.html, B varianti — yashil chiziqli kartochka, ✓ belgi va «TAYYOR» muhri
+  return `${note}${rows.map(r => `
+    <div class="oy-kb">
+      <div class="oy-kb-ic">✓</div>
+      <div class="oy-kb-mid"><b>${esc(r.id)}</b><span>${esc(r.fason)} · ${oylikKunlar(r.kunlar)}</span></div>
+      <span class="oy-muhr">TAYYOR</span>
+      <div class="oy-kb-r"><b>${r.soni}</b><small>${oylikUsd(r.usd)}</small></div>
+    </div>`).join('')}
+  <div class="oy-kesim-hint">${rows.length} ta konver · ${jami} dona — hammasi bitgan ✓</div>`;
+}
+
+(function () {
+  const el = document.createElement('style');
+  el.textContent = `
+  .oy-kesim{padding:12px !important;border-radius:20px !important}
+  .oy-kesim.f{border:1.5px solid #C7D2FE !important;box-shadow:inset 0 1px 0 #fff,0 0 0 4px rgba(99,102,241,.08),0 18px 34px -22px rgba(79,70,229,.6) !important}
+  .oy-kesim.k{border:1.5px solid #A7F3D0 !important;box-shadow:inset 0 1px 0 #fff,0 0 0 4px rgba(16,185,129,.09),0 18px 34px -22px rgba(5,150,105,.6) !important}
+  .oy-kesim-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .oy-kesim-ttl{font-size:12px;font-weight:800;color:#475569;white-space:nowrap}
+  .oy-seg{display:inline-flex;gap:6px}
+  .oy-seg button{display:inline-flex !important;align-items:center;gap:5px;white-space:nowrap;padding:6px 10px !important;border-radius:12px !important;font-size:12px;font-weight:800;
+    color:#64748B !important;cursor:pointer;width:auto !important;margin:0 !important;background:rgba(255,255,255,.6) !important;
+    border:1px solid rgba(255,255,255,.95) !important;box-shadow:0 4px 10px -8px rgba(15,23,42,.5) !important}
+  .oy-seg em{font-style:normal;font-size:10px;padding:1px 6px;border-radius:99px;background:#E2E8F0;color:#475569}
+  .oy-kesim.f .oy-seg button.on{color:#fff !important;background:linear-gradient(135deg,rgba(59,130,246,.95),rgba(139,92,246,.95)) !important;border-color:rgba(255,255,255,.5) !important}
+  .oy-kesim.k .oy-seg button.on{color:#fff !important;background:linear-gradient(135deg,rgba(16,185,129,.95),rgba(20,184,166,.95)) !important;border-color:rgba(255,255,255,.5) !important}
+  .oy-seg button.on em{background:rgba(255,255,255,.28);color:#fff}
+  .oy-kb{display:flex;align-items:center;gap:10px;padding:9px 10px 9px 12px;margin-bottom:7px;border-radius:14px;position:relative;overflow:hidden;
+    background:linear-gradient(90deg,#ECFDF5,rgba(255,255,255,.9) 45%);border:1px solid #D1FAE5}
+  .oy-kb::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(#34D399,#059669)}
+  .oy-kb-ic{flex-shrink:0;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;color:#fff;font-weight:900;font-size:15px;
+    background:linear-gradient(135deg,#34D399,#059669);box-shadow:0 6px 12px -6px #059669}
+  .oy-kb-mid{flex:1;min-width:0}
+  .oy-kb-mid b{display:block;font-size:14px;color:#0F172A}
+  .oy-kb-mid span{display:block;font-size:13px;font-weight:600;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .oy-kb-mid .oy-kb-rang{font-size:12px;font-weight:600;color:#7C3AED;white-space:normal}
+  .oy-muhr{flex-shrink:0;transform:rotate(-12deg);font-size:9px;font-weight:900;letter-spacing:.12em;color:rgba(5,150,105,.55);
+    border:1.5px solid rgba(5,150,105,.45);border-radius:6px;padding:1px 5px}
+  @media (max-width:350px){.oy-muhr{display:none}}
+  .oy-kb-r{flex-shrink:0;text-align:right}
+  .oy-kb-r b{display:block;font-size:16px;color:#0F172A}
+  .oy-kb-r small{display:block;font-size:11px;color:#64748B}
+  .oy-kesim-hint{text-align:center;font-size:11px;color:#94A3B8;margin-top:8px}
+  .oy-kesim-note{font-size:12px;color:#475569;margin:0 2px 8px}
+  .oy-kesim-note.warn{color:#B45309;font-weight:600}
+  .oy-flip-l{animation:oyFlipL .35s ease}
+  .oy-flip-r{animation:oyFlipR .35s ease}
+  @keyframes oyFlipL{from{transform:perspective(900px) rotateY(-75deg);opacity:.3}to{transform:none;opacity:1}}
+  @keyframes oyFlipR{from{transform:perspective(900px) rotateY(75deg);opacity:.3}to{transform:none;opacity:1}}
+  @media (prefers-reduced-motion: reduce){.oy-flip-l,.oy-flip-r{animation:none}}`;
+  document.head.appendChild(el);
+})();
 
 function oylikProgress(per) {
   const pct = Math.max(0, Math.min(100, Number(per.foiz) || 0));
@@ -5887,12 +6026,67 @@ function renderShToday() {
   const tiles = STAGE_SEQ.map(s => {
     const d = T.today[s] - T.yest[s];
     const delta = d > 0 ? `<em class="up">▲ ${d}</em>` : (d < 0 ? `<em class="dn">▼ ${-d}</em>` : `<em class="eq">= 0</em>`);
-    return `<div class="sh-td ${T.today[s] ? '' : 'zero'}" onclick="shGoIsh('${s}')" title="${esc(getStageLabel(s))}">
+    return `<div class="sh-td ${T.today[s] ? '' : 'zero'}" onclick="shTodayOpen('${s}')" title="${esc(getStageLabel(s))}">
       <i>${BOLIM_ICON[s] || '🏭'}</i><b>${shInt(T.today[s])}</b><small>${s === 'ombor' ? 'Omborga' : (SH_STAGE[s] || s)}</small>${delta}</div>`;
   }).join('');
   return `<div class="sh-sec"><h2>Bugun tugatildi <a onclick="navGo('statistika')">batafsil ›</a></h2>
     <div class="sh-card"><div class="sh-today">${tiles}</div>
       <div class="sh-tdl"><span>Kecha: <b>${shInt(T.totalYest)} dona</b></span><span>Bugun: <b>${shInt(T.totalToday)} dona</b></span></div></div></div>`;
+}
+// Bo'lim katakchasi bosilganda — shu bo'lim bugun (yoki kecha) tugatgan konverlar ro'yxati, katakchadagi son bilan
+// bir xil qoida (qurilma kuni, holat 'tugadi'). Kartochkalar oylikdagi konverlar kesimi uslubida (oy-kb).
+function shTodayOpen(s) { state.shTodayModal = { bolim: s, kun: 'bugun' }; render(); }
+function shTodayClose() { state.shTodayModal = null; render(); }
+function shTodayKun(k) { if (state.shTodayModal) { state.shTodayModal.kun = k; render(); } }
+function shTodayRows(bolim, kecha) {
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const t0 = d0.getTime() - (kecha ? 86400000 : 0), t1 = t0 + 86400000;
+  const map = new Map();
+  state.orders.concat(state.archive || []).forEach(o => (o.partiyalar || []).forEach(p => {
+    if (p.bosqich !== bolim || p.holat !== 'tugadi' || !p.tugashVaqti) return;
+    const t = new Date(p.tugashVaqti).getTime();
+    if (!(t >= t0 && t < t1)) return;
+    const id = String(o.id);
+    let r = map.get(id);
+    if (!r) map.set(id, r = { id, fason: o.model || '', soni: 0, oxirgi: 0, ranglar: new Set() });
+    r.soni += Number(p.soni) || 0;
+    r.oxirgi = Math.max(r.oxirgi, t);
+    if (p.rang) r.ranglar.add(p.rang);
+  }));
+  return [...map.values()].sort((a, b) => b.oxirgi - a.oxirgi);   // eng oxirgi tugatilgani tepada
+}
+function renderShTodayModal() {
+  const M = state.shTodayModal;
+  if (!M) return '';
+  const kecha = M.kun === 'kecha';
+  const rows = shTodayRows(M.bolim, kecha);
+  const jami = rows.reduce((a, r) => a + r.soni, 0);
+  const vaqt = t => { const d = new Date(t); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const list = rows.length ? rows.map(r => `
+    <div class="oy-kb">
+      <div class="oy-kb-ic">✓</div>
+      <div class="oy-kb-mid"><b>${esc(r.id)}</b><span>${esc(r.fason)} · ${vaqt(r.oxirgi)}</span>${r.ranglar.size ? `<span class="oy-kb-rang">🎨 ${esc([...r.ranglar].join(', '))}</span>` : ''}</div>
+      <span class="oy-muhr">TAYYOR</span>
+      <div class="oy-kb-r"><b>${r.soni}</b><small>dona</small></div>
+    </div>`).join('') : `<div class="empty">${kecha ? 'Kecha' : 'Bugun hali'} bu bo‘limda tugatilgan ish yo‘q</div>`;
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this)shTodayClose()">
+    <div class="modal oy-kesim k" style="max-width:440px;">
+      <div class="oy-kesim-head">
+        <span class="oy-kesim-ttl">${BOLIM_ICON[M.bolim] || '🏭'} ${esc(getStageLabel(M.bolim))}</span>
+        <div class="oy-seg">
+          <button class="${!kecha ? 'on' : ''}" onclick="shTodayKun('bugun')">Bugun</button>
+          <button class="${kecha ? 'on' : ''}" onclick="shTodayKun('kecha')">Kecha</button>
+        </div>
+      </div>
+      <div style="max-height:55vh;overflow-y:auto;">${list}</div>
+      ${rows.length ? `<div class="oy-kesim-hint">${rows.length} ta konver · ${jami} dona — ${kecha ? 'kecha' : 'bugun'} tugatildi ✓</div>` : ''}
+      <div class="modal-actions" style="margin-top:12px;display:flex;gap:8px;">
+        <button class="secondary" style="flex:1;white-space:nowrap" onclick="state.shTodayModal=null;shGoIsh('${M.bolim}')">⏳ Jarayondagilar</button>
+        <button class="secondary" style="flex:1" onclick="shTodayClose()">Yopish</button>
+      </div>
+    </div>
+  </div>`;
 }
 (function () {
   const css = `
