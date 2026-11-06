@@ -273,7 +273,7 @@ let MODELS = ['Milano','Elizabetta','Sofia','Baracco','Laura','Sultan','Owen','O
 // lekin masalan "Owen" kabi ba'zi fasonlar to'g'ridan-to'g'ri "shkurka"dan boshlanadi.
 let MODEL_START_STAGE = { Owen: 'shkurka' };
 const CHAIR_IMAGES = { 'Milano': '', 'Elizabetta': '', 'Sofia': '', 'Baracco': '', 'Laura': '', 'Sultan': '', 'Owen': '', 'Onix': '', 'Sheikh': '' };
-const COLORS = ['kod-013', 'kod-011', 'kod-e8', 'kod-123', 'kod-118', 'kod-9010', 'Shanpan', 'Shanpan q.p', 'Qora rang', 'Tilla', 'Baqlajon'];
+const COLORS = ['kod-013', 'kod-011', 'kod-e8', 'kod-123', 'kod-118', 'Shanpan', 'Shanpan q.p', 'Qora rang', 'Tilla', 'Baqlajon'];
 
 function getModelStartStage(model) {
   return MODEL_START_STAGE[model] || 'zborka';
@@ -1581,6 +1581,7 @@ function badge(holat) {
   const l = L();
   if (holat === 'kutilmoqda') return `<span class="badge wait">⏳ ${l.kutilmoqda}</span>`;
   if (holat === 'jarayonda') return `<span class="badge progress">⚙️ ${l.jarayonda}</span>`;
+  if (holat === 'boshlanmagan') return `<span class="badge bs-new">⏸ Boshlanmagan</span>`;
   return `<span class="badge done">✅ ${l.holatTayyor}</span>`;
 }
 
@@ -1593,7 +1594,12 @@ function ticketCard(order, partiya, showActions) {
   const l = L();
   const stageLbl = getStageLabel(partiya.bosqich);
   let actionsHtml = '';
-  if (showActions) {
+  const isLocked = partiya.holat === 'boshlanmagan';
+  if (isLocked) {
+    // Boshqaruvchi «Ishni boshlash»ni bosmaguncha: xira, tugma bosilmaydi
+    actionsHtml = `<div class="bs-lockbar">🔒 Boshqaruvchi boshlashini kutmoqda</div>` +
+      (showActions ? `<div class="actions"><button class="primary" disabled>${l.qabulQildim}</button></div>` : '');
+  } else if (showActions) {
     if (partiya.holat === 'kutilmoqda') {
       actionsHtml = `<div class="actions"><button class="primary" onclick="acceptPartiya('${order.id}','${partiya.pid}')">${l.qabulQildim}</button></div>`;
     } else if (partiya.holat === 'jarayonda') {
@@ -1624,7 +1630,7 @@ function ticketCard(order, partiya, showActions) {
     </div>` : '';
 
   return `
-  <div class="card ticket">
+  <div class="card ticket${isLocked ? ' bs-locked' : ''}">
     <div class="stub">${esc(order.id)}</div>
     ${imgHtml}
     <div class="body">
@@ -2074,7 +2080,9 @@ function renderDeptDashboard() {
     }
   }
 
-  filteredItems.sort((a, b) => (a.p.holat === 'jarayonda' ? 0 : 1) - (b.p.holat === 'jarayonda' ? 0 : 1));
+  // Tartib: jarayonda → kutilmoqda → boshlanmagan (xira, eng pastda)
+  const holatTartib = h => h === 'jarayonda' ? 0 : (h === 'boshlanmagan' ? 2 : 1);
+  filteredItems.sort((a, b) => holatTartib(a.p.holat) - holatTartib(b.p.holat));
 
   return `
   ${renderBackButton()}
@@ -2446,6 +2454,11 @@ function renderYangiBuyurtma() {
     <label class="field-label">Bitta stul narxi ($)</label>
     <input id="fNarx" type="number" min="0" step="0.01" placeholder="200" oninput="updateYangiBuyurtmaJami()">
     <div id="fJamiSumma" style="font-weight:700; font-size:15px; color:#7C3AED; background:#F3E8FF; border-radius:8px; padding:10px 12px; margin-bottom:12px;">Jami summa: $0</div>
+    <label class="bs-sw">
+      <input type="checkbox" id="fDarhol">
+      <span class="bs-t"></span>
+      <span><b>Darhol boshlash</b><small>O'chiq — bo'limlar siz «Boshlash»ni bosgandan keyin ishlay oladi</small></span>
+    </label>
     <button class="primary" id="btnSaqlashYangi" style="width:100%" onclick="submitNewOrder()">${l.saqlash}</button>
   </div>
   <div style="text-align:center; margin-top:12px;">
@@ -2535,7 +2548,8 @@ async function submitNewOrder() {
   const rang = document.getElementById('fRang') ? document.getElementById('fRang').value : '';
   const btn = document.getElementById('btnSaqlashYangi');
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
-  const ok = await createOrder(k, m, s, n, rang);
+  const darhol = !!(document.getElementById('fDarhol') && document.getElementById('fDarhol').checked);
+  const ok = await createOrder(k, m, s, n, rang, darhol);
   if (btn) { btn.disabled = false; btn.textContent = L().saqlash; }
   if (ok) { switchTab('buyurtmalar'); }
 }
@@ -2556,16 +2570,18 @@ function renderBuyurtmalar() {
     return true;
   });
 
-  // Saralash: 'sana' (standart — eng yangisi tepada) yoki 'konver' (konver raqami tartibida)
+  // Saralash: 'sana' (standart — eng yangisi tepada) yoki 'konver' (konver raqami, eng kattasi/yangisi tepada)
   const sortByKonver = state.buyurtmaSort === 'konver';
   const sortedOrders = sortByKonver
-    ? filteredOrders.slice().sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' }))
+    ? filteredOrders.slice().sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true, sensitivity: 'base' }))
     : filteredOrders.slice().reverse();
+  const isUnstarted = o => (o.partiyalar || []).some(p => p.holat === 'boshlanmagan');
+  const unstartedCount = filteredOrders.filter(isUnstarted).length;
 
   const dateFilterHtml = isAdmin ? `
   <div class="card" style="margin-bottom:14px;">
     <button class="secondary" style="width:100%; margin-bottom:10px;" onclick="state.buyurtmaSort = state.buyurtmaSort === 'konver' ? 'sana' : 'konver'; render();">
-      ${sortByKonver ? '🔢 Saralash: Konver raqami bo\'yicha ▲ (bosing — sana bo\'yicha)' : '📅 Saralash: Sana bo\'yicha ▼ (bosing — konver raqami bo\'yicha)'}
+      ${sortByKonver ? '🔢 Saralash: Konver raqami ▼ — yangisi tepada (bosing — sana bo\'yicha)' : '📅 Saralash: Sana bo\'yicha ▼ (bosing — konver raqami bo\'yicha)'}
     </button>
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:4px;">
       <div style="flex:1; min-width:130px;">
@@ -2584,6 +2600,7 @@ function renderBuyurtmalar() {
   ${renderBackButton()}
   <h2 class="section-title">📝 ${l.buyurtmalar} ${isAdmin ? `<span style="font-weight:400; font-size:13px; color:var(--muted);">(${filteredOrders.length}/${state.orders.length})</span>` : ''}</h2>
   ${dateFilterHtml}
+  ${isAdmin && unstartedCount > 0 ? `<div class="bs-chip">⏸ <span style="flex:1">Boshlanmagan buyurtmalar</span><b>${unstartedCount}</b></div>` : ''}
   ${filteredOrders.length === 0 ? `<div class="empty">📋 ${l.hechNarsaYoq}</div>` : ''}
   ${sortedOrders.map(o => {
     // MUHIM: bu yerda faqat HALI DAVOM ETAYOTGAN (holat 'tugadi' bo'lmagan)
@@ -2594,22 +2611,26 @@ function renderBuyurtmalar() {
     const stages = o.partiyalar
       .filter(p => p.holat !== 'tugadi' || p.bosqich === 'ombor')
       .map(p => `${getStageLabel(p.bosqich)} (${p.soni}${p.rang ? ' - ' + p.rang : ''})`).join(', ') || 'Tayyor';
+    const yangi = isUnstarted(o);
+    const firstPart = yangi ? o.partiyalar.find(p => p.holat === 'boshlanmagan') : null;
     return `
-    <div class="card">
+    <div class="card${yangi ? ' bs-new' : ''}">
       <div class="ticket" style="cursor:pointer" onclick="state.historyFor=null;state.historyModal='${o.id}';render();">
         <div class="stub">${esc(o.id)}</div>
         <div class="body">
           <div class="row-between">
             <div class="model">🪑 ${esc(o.model)} &middot; ${o.jamiSoni} ${l.dona}</div>
-            ${o.holat === 'tayyor' ? `<span class="badge done">${l.holatTayyor}</span>` : `<span class="badge progress">${l.holatJarayonda}</span>`}
+            ${yangi ? `<span class="badge bs-new">⏸ Boshlanmagan</span>` : (o.holat === 'tayyor' ? `<span class="badge done">${l.holatTayyor}</span>` : `<span class="badge progress">${l.holatJarayonda}</span>`)}
           </div>
           <div class="time-text" style="margin-top:4px;"><b>${l.buyurtmaVaqti}:</b> ${formatDate(o.sana)}</div>
-          <div class="meta" style="margin-top:4px;">${stages}</div>
+          <div class="meta" style="margin-top:4px;">${yangi ? `Boshlanadigan bo'lim: <b>${getStageLabel(firstPart.bosqich)}</b>` : stages}</div>
           ${isAdmin && o.narxBirlik ? `<div style="margin-top:6px; font-weight:700; color:#7C3AED; background:#F3E8FF; display:inline-block; padding:3px 10px; border-radius:100px; font-size:12px;">💵 $${o.narxBirlik}/dona &middot; Jami: $${(o.narxBirlik * o.jamiSoni).toLocaleString()}</div>` : ''}
+          ${yangi ? `<div class="bs-note">Bo'limlar bu buyurtmani hali ishlay olmaydi</div>` : ''}
         </div>
       </div>
       ${isAdmin ? `
-      <div style="display:flex; gap:8px; margin-top:12px; border-top:1px dashed var(--line); padding-top:10px; justify-content:flex-end;">
+      <div style="display:flex; gap:8px; margin-top:12px; border-top:1px dashed var(--line); padding-top:10px; justify-content:flex-end; flex-wrap:wrap;">
+        ${yangi ? `<button class="bs-go" onclick="startOrder('${o.id}')">▶ Ishni boshlash</button>` : ''}
         <button class="edit-btn" onclick="openEditModal('${o.id}')">✏️ ${l.tahrirlash}</button>
         <button class="danger-btn" onclick="deleteOrder('${o.id}')">🗑️ ${l.ochirish}</button>
       </div>` : ''}
@@ -2740,7 +2761,7 @@ function renderStatistika() {
   const kxCls = h => h === 'tugadi' ? 'ok' : (h === 'jarayonda' ? 'wip' : 'wait');
   const kxOy = ['yan', 'fev', 'mar', 'apr', 'may', 'iyn', 'iyl', 'avg', 'sen', 'okt', 'noy', 'dek'];
   const kxWhen = k => {
-    if (k.holat !== 'tugadi') return k.holat === 'jarayonda' ? l.jarayonda : l.kutilmoqda;
+    if (k.holat !== 'tugadi') return k.holat === 'jarayonda' ? l.jarayonda : (k.holat === 'boshlanmagan' ? 'Boshlanmagan' : l.kutilmoqda);
     const d = new Date(kxTime(k)); if (isNaN(d)) return '—';
     return `${d.getDate()}-${kxOy[d.getMonth()]}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
@@ -3898,7 +3919,7 @@ async function checkFixPassword() {
   } catch (err) { apiShowError(err, 'Admin parolini tekshirish amalga oshmadi'); }
 }
 
-async function createOrder(konver, model, soni, narx, oldindanRang) {
+async function createOrder(konver, model, soni, narx, oldindanRang, darhol) {
   konver = String(konver || '').trim();
   soni = parseInt(soni, 10);
   narx = parseFloat(narx) || 0;
@@ -3912,11 +3933,24 @@ async function createOrder(konver, model, soni, narx, oldindanRang) {
     await apiCall('/api/orders', { method: 'POST', body: {
       id: konver, model, jamiSoni: soni, sana: now, holat: 'jarayonda', narxBirlik: narx,
       partiyalar: [{ pid: `${konver}-${Date.now()}`, soni, tugatilganSoni: 0, bosqich: stage,
-        susal: false, holat: 'kutilmoqda', rang: color, qabulVaqti: null, tugashVaqti: null }]
+        susal: false, holat: darhol ? 'kutilmoqda' : 'boshlanmagan', rang: color, qabulVaqti: null, tugashVaqti: null }]
     }});
     await syncFromSheets(true);
     return true;
   } catch (err) { apiShowError(err, 'Yangi buyurtma yaratilmadi'); return false; }
+}
+
+// Boshqaruvchi: boshlanmagan buyurtmani birinchi bo'limga yuborish
+async function startOrder(konverId) {
+  const o = findOrder(konverId);
+  if (!o) return;
+  const p = (o.partiyalar || []).find(x => x.holat === 'boshlanmagan');
+  const bolim = p ? getStageLabel(p.bosqich) : '';
+  if (!confirm(`▶ ${o.id} · ${o.model} · ${o.jamiSoni} dona\n\nIsh boshlansinmi? Buyurtma «${bolim}» bo'limiga yuboriladi va ular «Qabul qildim»ni bosa oladi.`)) return;
+  try {
+    await apiCall(`/api/orders/${encodeURIComponent(konverId)}/start`, { method: 'POST', body: {}, overlay: 'Boshlanmoqda...' });
+    await syncFromSheets(true);
+  } catch (err) { apiShowError(err, 'Buyurtmani boshlash amalga oshmadi'); }
 }
 
 async function deleteOrder(konverId) {
@@ -6429,6 +6463,27 @@ function arxivSearch(v) {
 
 loadData();
 </script>
+<style id="boshlash-uslub">
+  /* ===== «Boshlash» (maket: maket/boshlash_maket.html, 4B — bo'limda xira) ===== */
+  .badge.bs-new { background:#FFEDD5 !important; color:#C2410C !important; }
+  .card.bs-new { border:2px dashed #FDBA74 !important; background:rgba(255,247,237,.85) !important; }
+  .bs-note { font-size:11.5px; color:#9A3412; background:#FFEDD5; border-radius:10px; padding:6px 9px; margin-top:8px; }
+  .bs-chip { display:flex; align-items:center; gap:8px; background:#FFF7ED; border:1px solid #FED7AA; color:#9A3412; border-radius:14px; padding:9px 11px; font-size:12.5px; font-weight:700; margin-bottom:12px; }
+  .bs-chip b { background:#F97316; color:#fff; border-radius:99px; padding:1px 8px; }
+  button.bs-go { flex:1 1 100%; border:1px solid rgba(255,255,255,.6); border-radius:12px; padding:12px; font-weight:800; font-size:14.5px; color:#fff; cursor:pointer;
+    background:linear-gradient(180deg,#34D399,#059669); box-shadow:inset 0 1px 0 rgba(255,255,255,.6), 0 10px 22px -10px rgba(5,150,105,.7); }
+  button.bs-go:active { transform:translateY(1px); }
+  .card.bs-locked { opacity:.55; filter:grayscale(.6); }
+  .card.bs-locked button[disabled] { background:#CBD5E1 !important; box-shadow:none !important; color:#64748B !important; cursor:not-allowed; }
+  .bs-lockbar { margin-top:8px; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700; color:#475569; background:#F1F5F9; border-radius:10px; padding:7px 9px; }
+  .bs-sw { display:flex; align-items:center; gap:10px; margin:0 0 12px; padding:11px 12px; border-radius:14px; background:rgba(255,255,255,.75); border:1px solid #E2E8F0; cursor:pointer; }
+  .bs-sw input { position:absolute; opacity:0; width:0; height:0; }
+  .bs-sw .bs-t { width:44px; height:26px; border-radius:99px; background:#CBD5E1; position:relative; flex:none; transition:background .2s; }
+  .bs-sw .bs-t::after { content:""; position:absolute; left:3px; top:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 2px 4px rgba(0,0,0,.2); transition:left .2s; }
+  .bs-sw input:checked + .bs-t { background:#10B981; }
+  .bs-sw input:checked + .bs-t::after { left:21px; }
+  .bs-sw b { display:block; font-size:13.5px; } .bs-sw small { display:block; font-size:11.5px; color:#64748B; font-weight:400; }
+</style>
 <style id="shisha-uslub">
   /* ===== «Yorug' shisha» uslubi (maket: maket/shisha_maket.html, 1-variant) — hamma uchun.
      Faqat ko'rinish: joylashuv va tugmalar o'zgarmaydi. Kirish oynasiga (#app.lgapp) tegmaydi.
