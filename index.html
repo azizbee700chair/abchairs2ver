@@ -1607,6 +1607,21 @@ function ticketCard(order, partiya, showActions) {
       actionsHtml = `<div class="actions"><button class="secondary" onclick="openDoneModal('${order.id}','${partiya.pid}')">${label}</button></div>`;
     }
   }
+  // Qisman boshlangan konver (maket: maket/qisman_bolim_maket.html, B): katta son + katakchalar —
+  // ko'k: shu kartochkadagi stullar, chiziqli: hali boshlanmagan (kelmagan), och: boshqa bo'limlarda.
+  const kelmagan = isLocked ? 0 : (order.partiyalar || []).filter(x => x.holat === 'boshlanmagan').reduce((a, x) => a + (Number(x.soni) || 0), 0);
+  let qismanHtml = '';
+  if (kelmagan > 0) {
+    const jamiN = Math.max(Number(order.jamiSoni) || 0, Number(partiya.soni) + kelmagan);
+    const bu = Number(partiya.soni) || 0, boshqa = Math.max(0, jamiN - bu - kelmagan);
+    const seg = jamiN <= 40
+      ? `<div class="bs-seg">${'<i></i>'.repeat(bu)}${'<i class="ot"></i>'.repeat(boshqa)}${'<i class="no"></i>'.repeat(kelmagan)}</div>`
+      : `<div class="bs-seg bs-seg-l"><i style="flex:${bu}"></i>${boshqa ? `<i class="ot" style="flex:${boshqa}"></i>` : ''}<i class="no" style="flex:${kelmagan}"></i></div>`;
+    qismanHtml = `
+      <div class="bs-big"><b>${bu}</b><span>/ ${jamiN} ${l.dona} · ${stageLbl}</span></div>
+      ${seg}
+      <div class="bs-segl"><span class="a">▶ ${bu} sizga keldi</span><span class="b">${kelmagan} hali kelmagan</span></div>`;
+  }
   const susalTag = partiya.susal ? `<span class="badge susal">✨ Susal</span>` : '';
   const colorTag = partiya.rang ? colorBadge(partiya.rang) : '';
   const imgUrl = CHAIR_IMAGES[order.model];
@@ -1638,11 +1653,12 @@ function ticketCard(order, partiya, showActions) {
         <div class="model">${esc(order.model)}</div>
         ${badge(partiya.holat)}
       </div>
+      ${qismanHtml ? `${qismanHtml}${(susalTag || colorTag) ? `<div class="meta">${susalTag} ${colorTag}</div>` : ''}` : `
       <div class="meta">
         <span><b>${partiya.soni}</b> / <b>${order.jamiSoni}</b> ${l.dona}</span> &middot; <span><b>${stageLbl}</b></span>
         ${susalTag} ${colorTag}
-      </div>
-      ${(['zborka','shkurka','astarsepish','astarshkurka','lak','susal','qoplash'].includes(partiya.bosqich)) ? `
+      </div>`}
+      ${!qismanHtml && (['zborka','shkurka','astarsepish','astarshkurka','lak','susal','qoplash'].includes(partiya.bosqich)) ? `
         <div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">Bo'limdagi miqdor / konver jami: <b>${partiya.soni}</b> / <b>${order.jamiSoni}</b> ${l.dona}</div>
       ` : ''}
       ${progressBar}
@@ -2045,7 +2061,8 @@ function renderDeptDashboard() {
         if (isAdmin) {
           if (p.holat !== 'tugadi') items.push({ o, p });
         } else {
-          if (p.bosqich === bolim && p.holat !== 'tugadi') items.push({ o, p });
+          // Boshlanmagan konver bo'limlarga umuman ko'rinmaydi (boshqaruvchi «Boshlash»ni bosgach paydo bo'ladi)
+          if (p.bosqich === bolim && p.holat !== 'tugadi' && p.holat !== 'boshlanmagan') items.push({ o, p });
         }
       });
     }
@@ -2097,7 +2114,7 @@ function renderOmborQabul() {
   const l = L(); const incoming = [];
   state.orders.forEach(o => {
     if (o.partiyalar) {
-      o.partiyalar.forEach(p => { if (p.bosqich === 'ombor' && p.holat !== 'tugadi') incoming.push({ o, p }); });
+      o.partiyalar.forEach(p => { if (p.bosqich === 'ombor' && p.holat !== 'tugadi' && p.holat !== 'boshlanmagan') incoming.push({ o, p }); });
     }
   });
 
@@ -2609,21 +2626,27 @@ function renderBuyurtmalar() {
     // yozuvlar; ularni ham shu ro'yxatga qo'shsak, xuddi o'sha dona hali ham
     // avvalgi bo'limda "qolib ketgandek" noto'g'ri ko'rinar edi.
     const stages = o.partiyalar
-      .filter(p => p.holat !== 'tugadi' || p.bosqich === 'ombor')
+      .filter(p => (p.holat !== 'tugadi' || p.bosqich === 'ombor') && p.holat !== 'boshlanmagan')
       .map(p => `${getStageLabel(p.bosqich)} (${p.soni}${p.rang ? ' - ' + p.rang : ''})`).join(', ') || 'Tayyor';
-    const yangi = isUnstarted(o);
+    const unSum = o.partiyalar.filter(p => p.holat === 'boshlanmagan').reduce((a, p) => a + (Number(p.soni) || 0), 0);
+    const jamiN = Number(o.jamiSoni) || 0;
+    const qisman = unSum > 0 && unSum < jamiN;          // bir qismi boshlangan, qolgani kutib turibdi
+    const yangi = unSum > 0 && !qisman;                 // hali butunlay boshlanmagan
     const firstPart = yangi ? o.partiyalar.find(p => p.holat === 'boshlanmagan') : null;
+    const ishda = jamiN - unSum;
     return `
-    <div class="card${yangi ? ' bs-new' : ''}">
+    <div class="card${yangi ? ' bs-new' : ''}${qisman ? ' bs-half' : ''}">
       <div class="ticket" style="cursor:pointer" onclick="state.historyFor=null;state.historyModal='${o.id}';render();">
         <div class="stub">${esc(o.id)}</div>
         <div class="body">
           <div class="row-between">
             <div class="model">🪑 ${esc(o.model)} &middot; ${o.jamiSoni} ${l.dona}</div>
-            ${yangi ? `<span class="badge bs-new">⏸ Boshlanmagan</span>` : (o.holat === 'tayyor' ? `<span class="badge done">${l.holatTayyor}</span>` : `<span class="badge progress">${l.holatJarayonda}</span>`)}
+            ${yangi ? `<span class="badge bs-new">⏸ Boshlanmagan</span>` : qisman ? `<span class="badge bs-part">◐ Qisman</span>` : (o.holat === 'tayyor' ? `<span class="badge done">${l.holatTayyor}</span>` : `<span class="badge progress">${l.holatJarayonda}</span>`)}
           </div>
           <div class="time-text" style="margin-top:4px;"><b>${l.buyurtmaVaqti}:</b> ${formatDate(o.sana)}</div>
           <div class="meta" style="margin-top:4px;">${yangi ? `Boshlanadigan bo'lim: <b>${getStageLabel(firstPart.bosqich)}</b>` : stages}</div>
+          ${qisman ? `<div class="bs-split"><div class="bs-bar2"><div class="s1" style="width:${(ishda / jamiN * 100).toFixed(1)}%"></div><div class="s2" style="width:${(unSum / jamiN * 100).toFixed(1)}%"></div></div>
+            <div class="bs-lg"><span class="a">▶ ${ishda} ishda</span><span class="b">⏸ ${unSum} kutib turibdi</span></div></div>` : ''}
           ${isAdmin && o.narxBirlik ? `<div style="margin-top:6px; font-weight:700; color:#7C3AED; background:#F3E8FF; display:inline-block; padding:3px 10px; border-radius:100px; font-size:12px;">💵 $${o.narxBirlik}/dona &middot; Jami: $${(o.narxBirlik * o.jamiSoni).toLocaleString()}</div>` : ''}
           ${yangi ? `<div class="bs-note">Bo'limlar bu buyurtmani hali ishlay olmaydi</div>` : ''}
         </div>
@@ -2631,6 +2654,7 @@ function renderBuyurtmalar() {
       ${isAdmin ? `
       <div style="display:flex; gap:8px; margin-top:12px; border-top:1px dashed var(--line); padding-top:10px; justify-content:flex-end; flex-wrap:wrap;">
         ${yangi ? `<button class="bs-go" onclick="startOrder('${o.id}')">▶ Ishni boshlash</button>` : ''}
+        ${qisman ? `<button class="bs-go" onclick="startOrder('${o.id}')">▶ Qolganini boshlash (${unSum})</button>` : ''}
         <button class="edit-btn" onclick="openEditModal('${o.id}')">✏️ ${l.tahrirlash}</button>
         <button class="danger-btn" onclick="deleteOrder('${o.id}')">🗑️ ${l.ochirish}</button>
       </div>` : ''}
@@ -3303,6 +3327,7 @@ function render() {
     ${renderHistoryModal()}
     ${renderShTodayModal()}
     ${renderEditModal()}
+    ${renderStartModal()}
     ${(pendingPushes > 0 || state.manualSyncInProgress) ? `
     <div style="position:fixed; inset:0; background:rgba(15,23,42,0.35); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; gap:12px;">
       <div style="width:46px; height:46px; border:4px solid rgba(255,255,255,0.35); border-top-color:#fff; border-radius:50%; animation:saqlanmoqda-spin 0.8s linear infinite;"></div>
@@ -3940,15 +3965,73 @@ async function createOrder(konver, model, soni, narx, oldindanRang, darhol) {
   } catch (err) { apiShowError(err, 'Yangi buyurtma yaratilmadi'); return false; }
 }
 
-// Boshqaruvchi: boshlanmagan buyurtmani birinchi bo'limga yuborish
-async function startOrder(konverId) {
+// Boshqaruvchi: boshlanmagan buyurtmani (yoki uning bir qismini) birinchi bo'limga yuborish.
+// Maket: maket/qisman_boshlash_maket.html — nechta dona boshlanishi so'raladi, konver raqami o'zgarmaydi.
+function startOrder(konverId) {
   const o = findOrder(konverId);
   if (!o) return;
-  const p = (o.partiyalar || []).find(x => x.holat === 'boshlanmagan');
-  const bolim = p ? getStageLabel(p.bosqich) : '';
-  if (!confirm(`▶ ${o.id} · ${o.model} · ${o.jamiSoni} dona\n\nIsh boshlansinmi? Buyurtma «${bolim}» bo'limiga yuboriladi va ular «Qabul qildim»ni bosa oladi.`)) return;
+  const un = (o.partiyalar || []).filter(x => x.holat === 'boshlanmagan');
+  if (!un.length) return;
+  const max = un.reduce((a, p) => a + (Number(p.soni) || 0), 0);
+  state.startModal = { konverId: o.id, model: o.model, jami: Number(o.jamiSoni) || max, max, bolim: getStageLabel(un[0].bosqich) };
+  render();
+  setTimeout(() => { const i = document.getElementById('stQty'); if (i) i.select(); }, 30);
+}
+
+function stQtyVal() {
+  const m = state.startModal; const i = document.getElementById('stQty');
+  return m && i ? parseInt(i.value, 10) : NaN;
+}
+function stSet(v) {
+  const m = state.startModal; const i = document.getElementById('stQty'); if (!m || !i) return;
+  i.value = Math.max(1, Math.min(m.max, v)); stUpd();
+}
+function stUpd() {
+  const m = state.startModal; if (!m) return;
+  const v = stQtyVal(), ok = Number.isInteger(v) && v >= 1 && v <= m.max;
+  const res = document.getElementById('stRes'), btn = document.getElementById('stGo');
+  if (res) {
+    res.className = 'st-res ' + (!ok ? 'bad' : (v < m.max ? 'part' : 'ok'));
+    res.innerHTML = !ok ? `⚠ 1 dan ${m.max} gacha son kiriting`
+      : (v < m.max ? `▶ <b>${v} dona</b> ${esc(m.bolim)} bo'limiga yuboriladi<br>⏸ <b>${m.max - v} dona</b> boshlanmagan bo'lib kutib turadi`
+                   : `✅ <b>${v} dona</b> ${esc(m.bolim)} bo'limiga yuboriladi.${m.max < m.jami ? ' Konver to\'liq boshlanadi.' : ''}`);
+  }
+  if (btn) { btn.disabled = !ok; btn.textContent = ok && v < m.max ? `▶ ${v} tasini boshlash` : '▶ Boshlash'; }
+  document.querySelectorAll('.st-qk span').forEach(s => s.classList.toggle('on', Number(s.dataset.v) === v));
+}
+
+function renderStartModal() {
+  const m = state.startModal; if (!m) return '';
+  const half = Math.max(1, Math.floor(m.max / 2));
+  return `
+  <div class="modal-overlay">
+    <div class="modal st-dlg">
+      <div style="text-align:center;"><div style="font-size:30px;">▶️</div>
+        <h3 style="margin:4px 0 2px;">${esc(m.konverId)} · ${esc(m.model)}</h3>
+        <div style="font-size:12.5px;color:var(--ink-soft);">Konverda ${m.jami} dona${m.max < m.jami ? ` · ishda ${m.jami - m.max}` : ''} · boshlanmagan: ${m.max}</div></div>
+      <label class="field-label" style="margin-top:14px;">Nechtasi boshlansin?</label>
+      <div class="st-num">
+        <button type="button" onclick="stSet((stQtyVal()||0)-1)">−</button>
+        <input id="stQty" type="number" min="1" max="${m.max}" value="${m.max}" inputmode="numeric" oninput="stUpd()" onkeydown="if(event.key==='Enter')confirmStart()">
+        <button type="button" onclick="stSet((stQtyVal()||0)+1)">+</button>
+      </div>
+      <div class="st-qk"><span data-v="${m.max}" class="on" onclick="stSet(${m.max})">Hammasi (${m.max})</span>${m.max > 1 ? `<span data-v="${half}" onclick="stSet(${half})">Yarmi (${half})</span>` : ''}</div>
+      <div id="stRes" class="st-res ok">✅ <b>${m.max} dona</b> ${esc(m.bolim)} bo'limiga yuboriladi.${m.max < m.jami ? ' Konver to\'liq boshlanadi.' : ''}</div>
+      <div class="modal-actions">
+        <button class="secondary" onclick="state.startModal=null;render();">${L().bekor}</button>
+        <button id="stGo" class="bs-go" style="flex:1.4 1 0;" onclick="confirmStart()">▶ Boshlash</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function confirmStart() {
+  const m = state.startModal; if (!m) return;
+  const v = stQtyVal();
+  if (!Number.isInteger(v) || v < 1 || v > m.max) { stUpd(); return; }
+  state.startModal = null; render();
   try {
-    await apiCall(`/api/orders/${encodeURIComponent(konverId)}/start`, { method: 'POST', body: {}, overlay: 'Boshlanmoqda...' });
+    await apiCall(`/api/orders/${encodeURIComponent(m.konverId)}/start`, { method: 'POST', body: { soni: v }, overlay: 'Boshlanmoqda...' });
     await syncFromSheets(true);
   } catch (err) { apiShowError(err, 'Buyurtmani boshlash amalga oshmadi'); }
 }
@@ -6482,6 +6565,29 @@ loadData();
   .bs-sw .bs-t::after { content:""; position:absolute; left:3px; top:3px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 2px 4px rgba(0,0,0,.2); transition:left .2s; }
   .bs-sw input:checked + .bs-t { background:#10B981; }
   .bs-sw input:checked + .bs-t::after { left:21px; }
+  /* qisman boshlash (maket: maket/qisman_boshlash_maket.html, maket/qisman_bolim_maket.html — B) */
+  .badge.bs-part { background:#E0F2FE !important; color:#0369A1 !important; }
+  .card.bs-half { border:2px dashed #7DD3FC !important; background:rgba(240,249,255,.85) !important; }
+  .bs-split { margin-top:9px; }
+  .bs-bar2 { display:flex; height:10px; border-radius:99px; overflow:hidden; background:#E2E8F0; }
+  .bs-bar2 .s1 { background:linear-gradient(90deg,#60A5FA,#2563EB); } .bs-bar2 .s2 { background:repeating-linear-gradient(45deg,#FDBA74 0 5px,#FED7AA 5px 10px); }
+  .bs-lg { display:flex; justify-content:space-between; font-size:11.5px; margin-top:5px; font-weight:700; } .bs-lg .a { color:#1D4ED8; } .bs-lg .b { color:#C2410C; }
+  .bs-big { display:flex; align-items:baseline; gap:6px; margin-top:6px; flex-wrap:wrap; }
+  .bs-big b { font-size:28px; line-height:1; color:#1D4ED8; font-weight:800; } .bs-big span { font-size:13px; color:var(--ink-soft,#64748B); font-weight:700; }
+  .bs-seg { display:flex; gap:2px; margin-top:8px; } .bs-seg i { flex:1; height:12px; border-radius:3px; background:#2563EB; min-width:0; }
+  .bs-seg i.ot { background:#BFDBFE; }
+  .bs-seg i.no { background:repeating-linear-gradient(45deg,#E2E8F0 0 4px,#F8FAFC 4px 8px); border:1px dashed #CBD5E1; }
+  .bs-seg-l i { flex-basis:0; }
+  .bs-segl { display:flex; justify-content:space-between; font-size:11.5px; font-weight:800; margin-top:5px; } .bs-segl .a { color:#1D4ED8; } .bs-segl .b { color:#94A3B8; }
+  .st-dlg { max-width:380px; }
+  .st-num { display:flex; align-items:center; gap:8px; }
+  .st-num button { width:48px; height:52px; flex:none; border-radius:14px; border:1px solid #E2E8F0; background:#F8FAFC; font-size:22px; font-weight:800; color:#334155; cursor:pointer; padding:0; }
+  .st-num input { flex:1; min-width:0; height:52px; margin:0 !important; border-radius:14px; border:2px solid #3B82F6 !important; text-align:center; font-size:24px !important; font-weight:800; box-shadow:0 0 0 4px rgba(59,130,246,.15); }
+  .st-qk { display:flex; gap:6px; margin-top:8px; } .st-qk span { flex:1; text-align:center; font-size:12px; font-weight:700; padding:8px 4px; border-radius:10px; background:#F1F5F9; color:#334155; cursor:pointer; }
+  .st-qk span.on { background:#DBEAFE; color:#1D4ED8; }
+  .st-res { margin-top:14px; border-radius:14px; padding:10px 12px; font-size:12.5px; line-height:1.55; }
+  .st-res.ok { background:#ECFDF5; color:#065F46; } .st-res.part { background:#FFF7ED; color:#9A3412; } .st-res.bad { background:#FEE2E2; color:#B91C1C; }
+  .st-dlg button.bs-go[disabled] { opacity:.5; cursor:not-allowed; }
   .bs-sw b { display:block; font-size:13.5px; } .bs-sw small { display:block; font-size:11.5px; color:#64748B; font-weight:400; }
 </style>
 <style id="shisha-uslub">
